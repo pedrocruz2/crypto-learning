@@ -1,3 +1,10 @@
-websockets
-fastapi
+numpy==1.26.4
+pandas
+matplotlib
+seaborn
+yfinance
+scikit-learn
+tensorflow
+statsmodels
+pmdarima
 
