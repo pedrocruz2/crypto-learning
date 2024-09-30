@@ -10,18 +10,12 @@ st.set_page_config(page_title="Previsão do Preço do Bitcoin", layout="wide")
 st.title("Previsão do Preço do Bitcoin")
 
 # Entrada do usuário: período de previsão
-period_options = [1, 7, 14, 30, 60, 90]
-period = st.selectbox('Selecione o período de previsão (dias):', period_options)
-
+period = st.text_input(label="Insira o Número de dias")
 # Botão para realizar a previsão
 if st.button('Prever'):
-    # URL da API (backend FastAPI)
     api_url = f"http://0.0.0.0:8000/predict/"
-
-    # Dados para a requisição
-    data = {"period": period}
-
-    # Requisição POST à API
+    data = {"period": int(period)}
+    
     try:
         response = requests.post(api_url, json=data)
         response.raise_for_status()  # Levanta um erro para códigos de status HTTP que indicam falha
@@ -30,8 +24,6 @@ if st.button('Prever'):
     else:
         # Processar a resposta da API
         result = response.json()
-
-        # Converter o resultado em um DataFrame
         forecast = pd.DataFrame(result['forecast'])
         forecast['Date'] = pd.to_datetime(forecast['Date'])
         forecast.set_index('Date', inplace=True)
@@ -49,14 +41,10 @@ if st.button('Prever'):
         df_historical.reset_index(inplace=True)
         df_historical['Date'] = pd.to_datetime(df_historical['Date'])
         df_historical.set_index('Date', inplace=True)
-
-        # Renomear a coluna para 'Preço Real'
         df_historical.rename(columns={'Close': 'Preco_Real'}, inplace=True)
 
         # Concatenar dados históricos com as previsões
         total_data = pd.concat([df_historical[['Preco_Real']], forecast], axis=1)
-
-        # Preencher possíveis valores NaN com o valor anterior
         total_data.fillna(method='ffill', inplace=True)
 
         # Plotar o gráfico utilizando Plotly
@@ -92,3 +80,47 @@ if st.button('Prever'):
 
         # Exibir o gráfico usando st.plotly_chart
         st.plotly_chart(fig, use_container_width=True)
+
+# Sidebar para reentreinar o modelo
+st.sidebar.header("Retreinar o Modelo")
+start_date_retrain = st.sidebar.date_input("Data de Início do Retreinamento", datetime.date(2014, 1, 1))
+end_date_retrain = st.sidebar.date_input("Data de Fim do Retreinamento", datetime.date.today())
+
+if st.sidebar.button("Retreinar Modelo"):
+    retrain_url = "http://0.0.0.0:8000/retrain/"
+    retrain_data = {"start_date": str(start_date_retrain), "end_date": str(end_date_retrain)}
+    try:
+        response_retrain = requests.post(retrain_url, json=retrain_data)
+        response_retrain.raise_for_status()
+        st.sidebar.success("Modelo retreinado com sucesso!")
+    except requests.exceptions.RequestException as e:
+        st.sidebar.error(f"Erro ao retreinar o modelo: {e}")
+
+# Sidebar para visualizar os logs de uso do sistema
+st.sidebar.header("Consultar Logs do Sistema")
+if st.sidebar.button("Ver Logs"):
+    try:
+        response_logs = requests.get("http://0.0.0.0:8000/model_usage_logs/")
+        response_logs.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        st.sidebar.error(f"Erro ao se comunicar com o backend: {e}")
+    else:
+        logs = response_logs.json()['logs']
+        df_logs = pd.DataFrame(logs)
+
+        # Renomear as colunas e reorganizar
+        df_logs = df_logs.rename(columns={
+            'timestamp': 'Data',
+            'occurrence_type': 'Tipo',
+            'start_date': 'Data Início',
+            'end_date': 'Data Final'
+        })
+
+        # Selecionar as colunas na ordem desejada
+        df_logs = df_logs[['Data', 'Tipo', 'Data Início', 'Data Final']]
+
+        # Formatar a data
+        df_logs['Data'] = pd.to_datetime(df_logs['Data']).dt.strftime('%d-%m-%Y %H:%M:%S')
+
+        st.sidebar.write("Logs de Uso do Modelo")
+        st.sidebar.dataframe(df_logs, use_container_width=True)
