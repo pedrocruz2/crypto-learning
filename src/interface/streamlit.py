@@ -1,41 +1,13 @@
-# app.py
-
 import streamlit as st
-import numpy as np
+import requests
 import pandas as pd
-import yfinance as yf
+import plotly.graph_objects as go
 import datetime
+import yfinance as yf
 
-from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import load_model
+st.set_page_config(page_title="Previsão do Preço do Bitcoin", layout="wide")
 
-# Título da Aplicação
-st.title('Previsão do Preço do Bitcoin')
-
-# Carregar o modelo salvo
-@st.cache_resource
-def load_trained_model():
-    model = load_model('model_with_volume.h5')
-    return model
-
-model = load_trained_model()
-
-# Função para obter dados atualizados do Bitcoin
-@st.cache_data
-def get_data():
-    # Obter dados históricos do Bitcoin
-    btc = yf.Ticker("BTC-USD")
-    end_date = datetime.datetime.today()
-    start_date = end_date - datetime.timedelta(days=365*5)  # Últimos 5 anos
-    data = btc.history(start=start_date, end=end_date)
-    data.reset_index(inplace=True)
-    return data
-
-data = get_data()
-
-# Mostrar os dados recentes
-st.subheader('Dados Recentes do Bitcoin')
-st.write(data.tail())
+st.title("Previsão do Preço do Bitcoin")
 
 # Entrada do usuário: período de previsão
 period_options = [1, 7, 14, 30, 60, 90]
@@ -43,55 +15,80 @@ period = st.selectbox('Selecione o período de previsão (dias):', period_option
 
 # Botão para realizar a previsão
 if st.button('Prever'):
-    # Preparação dos dados para a previsão
-    df = data[['Date', 'Close']]
-    
-    # Ordenar os dados por data
-    df.sort_values('Date', inplace=True)
-    
-    # Normalização dos dados
-    close_data = df['Close'].values.reshape(-1, 1)
-    
-    scaler_close = MinMaxScaler(feature_range=(0, 1))
-    scaled_close = scaler_close.fit_transform(close_data)
-    
-    # Preparar os dados para a previsão
-    look_back = 60  # Usando os últimos 60 dias
-    recent_data = scaled_close[-look_back:]
-    prediction_list = recent_data.copy()
-    
-    # Previsão para o período selecionado
-    for _ in range(period):
-        x_input = prediction_list[-look_back:]
-        x_input = x_input.reshape((1, look_back, 1))
-        y_pred = model.predict(x_input, verbose=0)
-        
-        prediction_list = np.append(prediction_list, y_pred, axis=0)
-    
-    # Extrair as previsões
-    predicted_prices = prediction_list[-period:]
-    predicted_prices = scaler_close.inverse_transform(predicted_prices)
-    
-    # Criar datas futuras
-    last_date = df['Date'].iloc[-1]
-    future_dates = [last_date + datetime.timedelta(days=i) for i in range(1, period+1)]
-    
-    # DataFrame com as previsões
-    forecast = pd.DataFrame({'Date': future_dates, 'Previsão': predicted_prices.flatten()})
-    forecast.set_index('Date', inplace=True)
-    
-    # Dados históricos para plotagem
-    historical_data = df.set_index('Date')
-    historical_data = historical_data[['Close']]
-    historical_data = historical_data.rename(columns={'Close': 'Preço Real'})
-    
-    # Concatenar dados históricos com as previsões
-    total_data = pd.concat([historical_data, forecast], axis=0)
-    
-    # Mostrar as previsões
-    st.subheader('Previsão do Preço do Bitcoin')
-    st.write(forecast)
-    
-    # Plotar o gráfico utilizando st.line_chart
-    st.subheader('Gráfico de Previsão')
-    st.line_chart(total_data)
+    # URL da API (backend FastAPI)
+    api_url = f"http://0.0.0.0:8000/predict/"
+
+    # Dados para a requisição
+    data = {"period": period}
+
+    # Requisição POST à API
+    try:
+        response = requests.post(api_url, json=data)
+        response.raise_for_status()  # Levanta um erro para códigos de status HTTP que indicam falha
+    except requests.exceptions.RequestException as e:
+        st.error(f"Erro ao se comunicar com o backend: {e}")
+    else:
+        # Processar a resposta da API
+        result = response.json()
+
+        # Converter o resultado em um DataFrame
+        forecast = pd.DataFrame(result['forecast'])
+        forecast['Date'] = pd.to_datetime(forecast['Date'])
+        forecast.set_index('Date', inplace=True)
+        forecast.rename(columns={'Predicted_Price': 'Previsao'}, inplace=True)
+
+        # Mostrar as previsões
+        st.subheader('Previsão do Preço do Bitcoin')
+        st.write(forecast)
+
+        # Coletar os dados históricos do Bitcoin usando yfinance
+        end_date = datetime.datetime.today()
+        start_date = end_date - datetime.timedelta(days=60)
+        btc = yf.Ticker("BTC-USD")
+        df_historical = btc.history(start=start_date, end=end_date)
+        df_historical.reset_index(inplace=True)
+        df_historical['Date'] = pd.to_datetime(df_historical['Date'])
+        df_historical.set_index('Date', inplace=True)
+
+        # Renomear a coluna para 'Preço Real'
+        df_historical.rename(columns={'Close': 'Preco_Real'}, inplace=True)
+
+        # Concatenar dados históricos com as previsões
+        total_data = pd.concat([df_historical[['Preco_Real']], forecast], axis=1)
+
+        # Preencher possíveis valores NaN com o valor anterior
+        total_data.fillna(method='ffill', inplace=True)
+
+        # Plotar o gráfico utilizando Plotly
+        st.subheader('Gráfico de Previsão')
+
+        fig = go.Figure()
+
+        # Adicionar a linha do preço histórico
+        fig.add_trace(go.Scatter(
+            x=total_data.index,
+            y=total_data['Preco_Real'],
+            mode='lines',
+            name='Preço Real'
+        ))
+
+        # Adicionar a linha das previsões
+        fig.add_trace(go.Scatter(
+            x=forecast.index,
+            y=forecast['Previsao'],
+            mode='lines',
+            name='Previsão',
+            line=dict(dash='dash')
+        ))
+
+        # Configurar o layout do gráfico
+        fig.update_layout(
+            title="Previsão do Preço do Bitcoin",
+            xaxis_title="Data",
+            yaxis_title="Preço (USD)",
+            legend_title="Legenda",
+            hovermode="x"
+        )
+
+        # Exibir o gráfico usando st.plotly_chart
+        st.plotly_chart(fig, use_container_width=True)

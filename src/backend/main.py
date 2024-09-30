@@ -1,5 +1,3 @@
-# main.py
-
 from fastapi import FastAPI
 from pydantic import BaseModel
 import uvicorn
@@ -81,3 +79,11 @@ def predict_price(request: PredictionRequest):
     forecast_list = forecast.to_dict(orient='records')
 
     return {'forecast': forecast_list}
+
+
+
+if __name__ == "__main__":
+    # OBRIGADO LUAN PELO MÉTODO, UVICORN EU TE DESPREZO
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
